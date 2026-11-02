@@ -125,3 +125,53 @@ describe.runIf(existsSync(REF))('flow arrangement on the reference schema', () =
     }
   });
 });
+
+/** Closest gap between two tables side by side (rows overlap) and between two stacked ones (columns overlap). */
+function closest(s: Schema, skip: (a: Schema['tables'][number], b: Schema['tables'][number]) => boolean = () => false) {
+  let side = Infinity, stack = Infinity;
+  for (const a of s.tables)
+    for (const b of s.tables) {
+      if (a === b || skip(a, b)) continue;
+      if (a.y < b.y + cardHeight(b, s) && b.y < a.y + cardHeight(a, s) && b.x >= a.x) side = Math.min(side, b.x - a.x - CARD_W);
+      if (a.x < b.x + CARD_W && b.x < a.x + CARD_W && b.y >= a.y) stack = Math.min(stack, b.y - a.y - cardHeight(a, s));
+    }
+  return { side, stack };
+}
+
+describe('auto-layout spacing', () => {
+  const sample = () => {
+    const s = parseSql(readFileSync('src/sample.sql', 'utf8')).schema;
+    const g = suggestGroups(s);
+    s.groups = g.groups;
+    for (const t of s.tables) t.groupId = g.assignment.get(t.id);
+    return s;
+  };
+
+  it('leaves room between tables, even when they were placed close together', async () => {
+    for (const mode of ['groups', 'flow'] as const) {
+      const s = sample();
+      apply(s, await autoLayout(s, { direction: 'RIGHT', mode }));
+      // squeeze two tables side by side and one under them, then arrange again
+      const [a, b, c] = s.tables;
+      Object.assign(b, { x: a.x + CARD_W + 20, y: a.y + 40 });
+      Object.assign(c, { x: a.x + 10, y: a.y + cardHeight(a, s) + 12 });
+      apply(s, await autoLayout(s, { direction: 'RIGHT', mode }));
+      const { side, stack } = closest(s);
+      expect(side).toBeGreaterThanOrEqual(44);
+      expect(stack).toBeGreaterThanOrEqual(30);
+    }
+  }, 30000);
+
+  it('leaves locked tables as close as they were put', async () => {
+    const s = sample();
+    apply(s, await autoLayout(s, { direction: 'RIGHT' }));
+    const [a, b] = s.tables;
+    Object.assign(b, { x: a.x + CARD_W + 20, y: a.y, locked: true });
+    a.locked = true;
+    apply(s, await autoLayout(s, { direction: 'RIGHT' }));
+    expect(b.x - a.x - CARD_W).toBe(20);
+    const both = (x: Schema['tables'][number], y: Schema['tables'][number]) => !!x.locked && !!y.locked;
+    expect(closest(s, both).side).toBeGreaterThanOrEqual(44);
+    expect(closest(s, both).stack).toBeGreaterThanOrEqual(30);
+  }, 30000);
+});

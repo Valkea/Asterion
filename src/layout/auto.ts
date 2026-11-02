@@ -109,7 +109,8 @@ export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): P
         : strategy === 'compound'
           ? await compoundLayout(schema, opts)
           : await islandsLayout(schema, opts, strategy);
-    if (strategy !== 'current') removeBlockOverlaps(schema, raw, () => false);
+    // a hand-made drawing stays as it is unless tables sit too close
+    if (strategy !== 'current' || crowded(schema, raw)) spaceOut(schema, raw);
     const sc = score(schema, raw, hidden, detail);
     candidates.push({ pos: raw, strategy, crossings: sc.crossings, score: sc.score });
   }
@@ -283,7 +284,7 @@ export function refineBlocks(schema: Schema, start: Map<string, Pos>, hidden: Se
     return schema.tables.some((t) => {
       if (t.id === id) return false;
       const b = p.get(t.id)!;
-      return a.x < b.x + CARD_W + 16 && b.x < a.x + CARD_W + 16 && a.y < b.y + heightOf.get(t.id)! + 16 && b.y < a.y + ha + 16;
+      return a.x < b.x + CARD_W + MIN_GAP_X && b.x < a.x + CARD_W + MIN_GAP_X && a.y < b.y + heightOf.get(t.id)! + MIN_GAP_Y && b.y < a.y + ha + MIN_GAP_Y;
     });
   };
   for (const ids of list)
@@ -413,6 +414,7 @@ function isLockedFn(schema: Schema) {
 function finalize(schema: Schema, pos: Map<string, Pos>): Map<string, Pos> {
   const isLocked = isLockedFn(schema);
   if (schema.tables.some(isLocked)) return honourLocks(schema, pos, isLocked);
+  if (crowded(schema, pos)) spaceOut(schema, pos);
   const minOf = (vals: number[]) => (vals.length ? Math.min(...vals) : 0);
   const dx = minOf(schema.tables.map((t) => t.x)) - minOf([...pos.values()].map((p) => p.x));
   const dy = minOf(schema.tables.map((t) => t.y)) - minOf([...pos.values()].map((p) => p.y));
@@ -617,6 +619,10 @@ interface Block {
 }
 
 const MARGIN = 48;
+/** Least room between two tables an arrangement leaves: side by side, both lines' stubs fit (router STUB + CLEARANCE)… */
+const MIN_GAP_X = 44;
+/** …stacked, a line still passes between them. Hand-placed (locked) tables may sit closer. */
+const MIN_GAP_Y = 30;
 
 function honourLocks(schema: Schema, pos: Map<string, Pos>, isLocked: (t: Schema['tables'][number]) => boolean): Map<string, Pos> {
   const byId = new Map(schema.tables.map((t) => [t.id, t]));
@@ -718,12 +724,38 @@ function bounds(ids: string[], schema: Schema, pos: Map<string, Pos>): Rect {
   return { x: x0 - 36, y: y0 - 72, w: x1 - x0 + 72, h: y1 - y0 + 108 };
 }
 
-function separateWithin(ids: string[], schema: Schema, pos: Map<string, Pos>, fixed: Set<string>) {
+/** Whether two tables sit closer than MIN_GAP_X / MIN_GAP_Y. */
+function crowded(schema: Schema, pos: Map<string, Pos>): boolean {
+  const rects = schema.tables.map((t) => ({ ...pos.get(t.id)!, h: cardHeight(t, schema) }));
+  return rects.some((a, i) =>
+    rects.some((b, j) => j > i && a.x < b.x + CARD_W + MIN_GAP_X && b.x < a.x + CARD_W + MIN_GAP_X && a.y < b.y + b.h + MIN_GAP_Y && b.y < a.y + a.h + MIN_GAP_Y),
+  );
+}
+
+/**
+ * Blocks apart first (their frames keep tables of different blocks far apart), then tables of a block
+ * at least MIN_GAP_X / MIN_GAP_Y from each other, and blocks apart again if that made one grow into another.
+ */
+function spaceOut(schema: Schema, pos: Map<string, Pos>) {
+  removeBlockOverlaps(schema, pos, () => false);
+  const blocks = new Map<string, string[]>();
+  for (const t of schema.tables) {
+    const k = t.groupId ? `g:${t.groupId}` : t.id;
+    if (!blocks.has(k)) blocks.set(k, []);
+    blocks.get(k)!.push(t.id);
+  }
+  let moved = false;
+  for (const ids of blocks.values()) if (ids.length > 1 && separateWithin(ids, schema, pos, new Set())) moved = true;
+  if (moved) removeBlockOverlaps(schema, pos, () => false);
+}
+
+function separateWithin(ids: string[], schema: Schema, pos: Map<string, Pos>, fixed: Set<string>): boolean {
+  const heightOf = new Map(schema.tables.map((t) => [t.id, cardHeight(t, schema)]));
   const rect = (id: string): Rect => {
-    const t = schema.tables.find((x) => x.id === id)!;
     const p = pos.get(id)!;
-    return { x: p.x, y: p.y, w: CARD_W, h: cardHeight(t, schema) };
+    return { x: p.x, y: p.y, w: CARD_W, h: heightOf.get(id)! };
   };
+  let any = false;
   for (let iter = 0; iter < 200; iter++) {
     let moved = false;
     for (let i = 0; i < ids.length; i++)
@@ -733,12 +765,12 @@ function separateWithin(ids: string[], schema: Schema, pos: Map<string, Pos>, fi
         if (fixed.has(a) && fixed.has(b)) continue;
         const A = rect(a);
         const B = rect(b);
-        const ox = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x) + 32;
-        const oy = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y) + 32;
+        const ox = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x) + MIN_GAP_X;
+        const oy = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y) + MIN_GAP_Y;
         if (ox <= 0 || oy <= 0) continue;
-        moved = true;
+        moved = any = true;
         const alongX = ox < oy;
-        const amt = alongX ? ox : oy;
+        const amt = (alongX ? ox : oy) + 1; // + 1: still enough once positions are rounded
         const sign = alongX ? Math.sign(B.x - A.x) || 1 : Math.sign(B.y - A.y) || 1;
         const sa = fixed.has(a) ? 0 : fixed.has(b) ? 1 : 0.5;
         const pa = pos.get(a)!;
@@ -753,4 +785,5 @@ function separateWithin(ids: string[], schema: Schema, pos: Map<string, Pos>, fi
       }
     if (!moved) break;
   }
+  return any;
 }
