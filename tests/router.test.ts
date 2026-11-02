@@ -5,7 +5,7 @@ import { suggestGroups } from '../src/layout/cluster';
 import { autoLayout } from '../src/layout/auto';
 import { CARD_W, cardHeight } from '../src/layout/geometry';
 import { routeSchema, regionFrame } from '../src/layout/routing';
-import { routeEdges, type Route } from '../src/layout/router';
+import { countRouteCrossings, routeEdges, type Route } from '../src/layout/router';
 import type { Schema } from '../src/model/types';
 
 // private reference schema, not in the repo: SCHEMA_DIR=/path/to/dir with schema-v15.sql
@@ -107,6 +107,41 @@ describe('router', () => {
     });
     const xs = [...routes.values()].map((r) => r.points.find((p, i) => i && r.points[i - 1].x === p.x)!.x);
     expect(new Set(xs).size).toBe(3);
+  });
+
+  it('links cards side by side through the narrow gap between them', () => {
+    for (const gap of [8, 20, 43, 50]) {
+      for (const [srcY, dstY] of [[139, 185], [20, 185], [150, 150]]) {
+        const routes = routeEdges({
+          cards: [
+            { id: 'a', x: 0, y: 0, w: 288, h: 186, region: 'g' },
+            { id: 'b', x: 288 + gap, y: 124, w: 288, h: 108, region: 'g' },
+          ],
+          regions: [{ id: 'g', x: -28, y: -56, w: 576 + gap + 56, h: 316 }],
+          edges: [{ id: 'e', net: 'n', src: { card: 'a', y: srcY }, dst: { card: 'b', y: dstY } }],
+        });
+        const r = routes.get('e')!;
+        expect([r.srcSide, r.dstSide]).toEqual(['R', 'L']);
+        expect(r.points.length).toBe(srcY === dstY ? 2 : 4);
+        for (const p of r.points) expect(p.x >= 288 && p.x <= 288 + gap).toBe(true);
+      }
+    }
+  });
+
+  it('gives each line its own lane in a narrow gap', () => {
+    const routes = routeEdges({
+      cards: [
+        { id: 'a', x: 0, y: 0, w: 288, h: 212 },
+        { id: 'b', x: 308, y: 124, w: 288, h: 108 },
+      ],
+      edges: [
+        { id: 'e1', net: 'n1', src: { card: 'a', y: 139 }, dst: { card: 'b', y: 185 } },
+        { id: 'e2', net: 'n2', src: { card: 'a', y: 165 }, dst: { card: 'b', y: 211 } },
+      ],
+    });
+    const lane = (id: string) => routes.get(id)!.points[1].x;
+    expect(lane('e1')).not.toBe(lane('e2'));
+    expect(countRouteCrossings(routes)).toBe(0);
   });
 });
 

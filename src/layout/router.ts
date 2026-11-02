@@ -56,6 +56,8 @@ const OVERLAP = 0.8; // extra cost per px when running along another net
 const CROSS = 22;
 const FOREIGN = 0.9; // extra cost per px inside a region neither end belongs to
 const REGION_GAP = 22;
+/** Facing cards closer than this leave no lane between them. */
+const MIN_LANE_GAP = 8;
 
 const E = 0, W = 1, S = 2, N = 3;
 const DX = [1, -1, 0, 0];
@@ -223,8 +225,29 @@ export function routeEdges(input: RouterInput): Map<string, Route> {
     const hNear = hSegs.filter((s) => s.y > w.y0 && s.y < w.y1 && s.x1 > w.x0 && s.x0 < w.x1);
     const vNear = vSegs.filter((s) => s.x > w.x0 && s.x < w.x1 && s.y1 > w.y0 && s.y0 < w.y1);
 
+    // ---- narrow gaps: an end card facing another card too close for a stub ----
+    // Its stub would end inside the other card's clearance (the only way out is then round the far
+    // side), or, when the other card is the other end, past that card's stub (a hook). Instead the
+    // stub may stop on a lane down the middle of the gap, which keeps only the clearance the gap leaves.
+    const lanes = new Map<number, { cl: number; between: boolean }>();
+    for (const id of new Set([e.src.card, e.dst.card])) {
+      const c = byId.get(id)!;
+      for (const o of near) {
+        if (o === c || o.y - CLEARANCE >= c.y + c.h || o.y + o.h + CLEARANCE <= c.y) continue;
+        const between = o.id === e.src.card || o.id === e.dst.card;
+        for (const [l, r] of [[c, o], [o, c]]) {
+          const gap = r.x - (l.x + l.w);
+          if (gap < MIN_LANE_GAP || gap >= (between ? 2 * STUB : STUB + CLEARANCE)) continue;
+          const x = Math.round((l.x + l.w + gap / 2) * 2) / 2;
+          const lane = lanes.get(x);
+          const cl = Math.min(lane?.cl ?? CLEARANCE, x - (l.x + l.w), r.x - x);
+          lanes.set(x, { cl, between: between || !!lane?.between });
+        }
+      }
+    }
+
     // ---- grid coordinates ----
-    const xv: number[] = [];
+    const xv: number[] = [...lanes.keys()];
     const yv: number[] = [];
     if (Number.isFinite(w.x0)) {
       xv.push(w.x0, w.x1);
@@ -261,6 +284,28 @@ export function routeEdges(input: RouterInput): Map<string, Route> {
       // horizontal edges strictly inside in y, spanning inside in x (one node outside on each end included)
       for (let j = j0; j < j1; j++) for (let i = Math.max(0, i0 - 1); i < i1; i++) hBlk[at(i, j)] = 1;
       for (let i = i0; i < i1; i++) for (let j = Math.max(0, j0 - 1); j < j1; j++) vBlk[at(i, j)] = 1;
+    }
+    // gap lanes: block again with their own clearance (in x only), the lane and the grid edges reaching it
+    const clOf = (i: number) => lanes.get(xs[i])?.cl ?? CLEARANCE;
+    for (const [x, { cl }] of lanes) {
+      if (cl >= CLEARANCE) continue;
+      const i = lowerBound(xs, x);
+      for (let j = 0; j < ny; j++) {
+        nodeBlk[at(i, j)] = vBlk[at(i, j)] = hBlk[at(i, j)] = 0;
+        if (i) hBlk[at(i - 1, j)] = 0;
+      }
+      for (const c of near) {
+        const j0 = lowerBound(ys, c.y - CLEARANCE + 0.25), j1 = lowerBound(ys, c.y + c.h + CLEARANCE - 0.25);
+        if (x >= c.x - cl + 0.25 && x < c.x + c.w + cl - 0.25) {
+          for (let j = j0; j < j1; j++) nodeBlk[at(i, j)] = 1;
+          for (let j = Math.max(0, j0 - 1); j < j1; j++) vBlk[at(i, j)] = 1;
+        }
+        for (const k of [i - 1, i]) {
+          if (k < 0 || k + 1 >= nx) continue;
+          const ecl = Math.min(clOf(k), clOf(k + 1));
+          if (xs[k + 1] >= c.x - ecl + 0.25 && xs[k] < c.x + c.w + ecl - 0.25) for (let j = j0; j < j1; j++) hBlk[at(k, j)] = 1;
+        }
+      }
     }
 
     // ---- soft regions: which region a grid edge's midpoint falls in ----
@@ -308,14 +353,23 @@ export function routeEdges(input: RouterInput): Map<string, Route> {
       const c = byId.get(cardId)!;
       const j = lowerBound(ys, Math.round(y * 2) / 2);
       const res: Port[] = [];
+      if (j >= ny) return res;
+      const free = (x: number) => {
+        const i = lowerBound(xs, x);
+        return i < nx && xs[i] === x && !nodeBlk[at(i, j)] ? at(i, j) : -1;
+      };
       for (const side of ['R', 'L'] as Side[]) {
-        const sx = side === 'R' ? c.x + c.w + STUB : c.x - STUB;
-        const i = lowerBound(xs, sx);
-        if (i >= nx || xs[i] !== sx || j >= ny) continue;
-        const node = at(i, j);
-        if (nodeBlk[node]) continue;
+        const edge = side === 'R' ? c.x + c.w : c.x;
         const outDir = side === 'R' ? E : W;
-        res.push({ side, p: { x: side === 'R' ? c.x + c.w : c.x, y: ys[j] }, node, dir: asSource ? outDir : REVERSE[outDir] });
+        const add = (node: number) => res.push({ side, p: { x: edge, y: ys[j] }, node, dir: asSource ? outDir : REVERSE[outDir] });
+        const stub = free(edge + (side === 'R' ? STUB : -STUB));
+        if (stub >= 0) add(stub);
+        // or a shorter stub, onto the lane of a narrow gap in front
+        for (const [x, lane] of lanes) {
+          if ((stub >= 0 && !lane.between) || Math.abs(x - edge) >= STUB || x > edge !== (side === 'R')) continue;
+          const node = free(x);
+          if (node >= 0) add(node);
+        }
       }
       return res;
     };

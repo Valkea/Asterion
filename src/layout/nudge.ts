@@ -13,6 +13,7 @@ const EDGE_PAD = 30; // …but at least this far from the cards
 const BEND_ROOM = 10; // minimum length of an inner segment
 const STUB_ROOM = 30; // keep in sync with router STUB
 const FRAME_ROOM = 18; // don't run along a region frame closer than this
+const TIGHT = 4; // in a gap between facing cards too narrow for the room above: all that's kept
 
 interface Seg {
   route: Route;
@@ -142,7 +143,11 @@ function compare(A: Item, B: Item): number {
 
 function place(group: Item[], axis: 'x' | 'y', regions: Box[]) {
   const n = group.length;
-  const bounds = group.map((it) => routeBounds(it, axis));
+  const bounds = group.map((it) => {
+    const b = routeBounds(it, axis, PAD, STUB_ROOM, BEND_ROOM);
+    // a lane between facing cards (see the router) can't keep the usual room: lanes still get apart
+    return b[0] > b[1] && it.hi - it.lo < 2 * STUB_ROOM ? routeBounds(it, axis, TIGHT, TIGHT, TIGHT) : b;
+  });
   let width = Infinity;
   for (const it of group) width = Math.min(width, it.hi - it.lo);
   const gap = n > 1 ? Math.max(MIN_GAP, Math.min(GAP, (width - 2 * PAD) / n)) : GAP;
@@ -197,8 +202,8 @@ function offFrames(v: number, it: Item, axis: 'x' | 'y', regions: Box[], lo: num
 }
 
 /** Hard limits for an item: stay in its channel, and don't flip or squash neighbouring segments of its own line. */
-function routeBounds(it: Item, axis: 'x' | 'y'): [number, number] {
-  let lo = it.lo + PAD, hi = it.hi - PAD;
+function routeBounds(it: Item, axis: 'x' | 'y', pad: number, stubRoom: number, bendRoom: number): [number, number] {
+  let lo = it.lo + pad, hi = it.hi - pad;
   for (const s of it.segs) {
     const p = s.route.points;
     const c = p[s.k][axis];
@@ -207,7 +212,7 @@ function routeBounds(it: Item, axis: 'x' | 'y'): [number, number] {
       [p[s.k + 2], s.k + 2 === p.length - 1],
     ] as [Pt | undefined, boolean][]) {
       if (!nb) continue;
-      const room = isEnd ? STUB_ROOM : BEND_ROOM;
+      const room = isEnd ? stubRoom : bendRoom;
       if (nb[axis] < c) lo = Math.max(lo, nb[axis] + room);
       else if (nb[axis] > c) hi = Math.min(hi, nb[axis] - room);
     }
