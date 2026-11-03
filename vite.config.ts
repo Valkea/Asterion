@@ -97,6 +97,8 @@ export default defineConfig({
   // relative base: the build works from any static host or sub-path (GitHub Pages, a file share…)
   base: './',
   plugins: [react(), offline()],
+  // module worker: the layout search lazy-loads elkjs like the page does
+  worker: { format: 'es' },
   build: {
     // elkjs is ~1.5 MB but only loaded the first time you click Arrange
     chunkSizeWarningLimit: 1600,

@@ -24,6 +24,8 @@ export interface LayoutOptions {
   compact?: boolean;
   /** Detail level the lines are drawn at, so crossings are counted on the drawing the user sees. */
   detail?: Detail;
+  /** Seed for ELK's own random choices (the background search varies it). */
+  seed?: number;
 }
 
 type Pos = { x: number; y: number };
@@ -131,6 +133,93 @@ export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): P
   return { pos, strategy: best.strategy, crossings: best.crossings };
 }
 
+export interface SearchOptions {
+  /** Give up at this time (performance.now()). */
+  deadline: number;
+  /** …or once this long has passed without finding anything cleaner. */
+  staleMs: number;
+  seed?: number;
+  /** Called with each arrangement clearly cleaner than the previous best, ready to apply. */
+  onBetter: (r: { pos: Map<string, Pos>; crossings: number }) => void;
+}
+
+/** Length of one restart: a fresh or kicked start, then a climb. */
+const ROUND_MS = 3000;
+/** With as many crossings, a drawing only counts as cleaner when its score drops by this much (no churn for nothing). */
+const MIN_GAIN = 0.5;
+
+/**
+ * Keep looking for a cleaner arrangement than the schema's current one (the one Arrange just applied).
+ * By group, rounds alternate: a fresh start, then a random kick of the best so far, each polished by the
+ * local search. Fresh starts make the big jumps, so each one gets its turn (in a shuffled order) instead
+ * of being drawn at random: the reseeded ELK layouts, and the dependency arrangements, whose lines already
+ * run one way and only need their groups sorted out. Meant for a worker: it runs until the deadline, or
+ * until it stops finding anything once every start has had its turn.
+ */
+export async function searchLayouts(schema: Schema, opts: LayoutOptions, search: SearchOptions): Promise<void> {
+  const hidden = opts.hiddenRelations ?? new Set<string>();
+  const detail = opts.detail ?? 'full';
+  const startPos = new Map(schema.tables.map((t) => [t.id, { x: t.x, y: t.y }]));
+  let best = { pos: startPos, ...score(schema, startPos, hidden, detail) };
+  let plan = opts.mode === 'flow' ? flowPlan(schema, hidden) : null;
+  let lastGain = performance.now();
+  const seed = search.seed ?? 1;
+  const offer = (raw: Map<string, Pos>) => {
+    const pos = finalize(schema, clonePos(raw));
+    const sc = score(schema, pos, hidden, detail);
+    if (sc.crossings > best.crossings || (sc.crossings === best.crossings && sc.score > best.score - MIN_GAIN)) return false;
+    best = { pos, ...sc };
+    lastGain = performance.now();
+    search.onBetter({ pos: clonePos(pos), crossings: sc.crossings });
+    return true;
+  };
+  const elkStarts: Strategy[] = schema.groups.length ? ['islands-down', 'islands-right', 'islands-stress', 'compound'] : ['compound'];
+  const flowStarts = (['RIGHT', 'DOWN'] as const).flatMap((direction) => [false, true].map((compact) => ({ direction, compact })));
+  const starts = shuffled([...elkStarts, ...flowStarts], lcg(seed));
+  let fresh = 0;
+  for (let round = 0; ; round++) {
+    const now = performance.now();
+    const stale = now - lastGain >= search.staleMs && (plan !== null || fresh >= starts.length);
+    if (now >= search.deadline || stale) return;
+    const rand = lcg(seed * 7919 + round);
+    const end = Math.min(search.deadline, now + ROUND_MS);
+    const schemaOrder = shuffleSchema(schema, rand);
+    if (plan) {
+      // refineFlow kicks and climbs by itself; each round starts from the best plan with a new seed
+      const r = await refineFlow(schemaOrder, plan, opts.direction, hidden, detail, end, opts.compact, seed * 7919 + round);
+      if (offer(r.pos)) plan = r.plan;
+    } else if (round % 2 === 0) {
+      const start = starts[fresh++ % starts.length];
+      const o = { ...opts, seed: 1 + Math.floor(rand() * 1e6) };
+      const raw =
+        typeof start === 'object'
+          ? placeFlow(schemaOrder, flowPlan(schemaOrder, hidden), start.direction, hidden, start.compact)
+          : start === 'compound'
+            ? await compoundLayout(schemaOrder, o)
+            : await islandsLayout(schemaOrder, o, start);
+      spaceOut(schema, raw);
+      offer(refineBlocks(schemaOrder, raw, hidden, detail, end).pos);
+    } else {
+      offer(refineBlocks(schemaOrder, best.pos, hidden, detail, end, false, { moves: 2 + Math.floor(rand() * 4), rand }).pos);
+    }
+    await new Promise((r) => setTimeout(r));
+  }
+}
+
+function shuffled<T>(a: T[], rand: () => number): T[] {
+  const b = [...a];
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [b[i], b[j]] = [b[j], b[i]];
+  }
+  return b;
+}
+
+/** Same schema, tables / groups / relations in another order: ELK and the local search break ties differently. */
+function shuffleSchema(schema: Schema, rand: () => number): Schema {
+  return { ...schema, tables: shuffled(schema.tables, rand), groups: shuffled(schema.groups, rand), relations: shuffled(schema.relations, rand) };
+}
+
 /** Time the local search may take in total, so big schemas stay responsive. */
 const REFINE_MS = 1500;
 /** Extra time for closing up gaps in the winning drawing. */
@@ -140,7 +229,7 @@ const COMPACT_MS = 500;
  * Local search on a flow plan, keeping its promise that lines run from referenced to referencing:
  * swap two bands, swap neighbours in a cell, or move a table one column within its allowed range.
  */
-async function refineFlow(schema: Schema, start: FlowPlan, direction: Direction, hidden: Set<string>, detail: Detail, deadline: number, compact = false) {
+async function refineFlow(schema: Schema, start: FlowPlan, direction: Direction, hidden: Set<string>, detail: Detail, deadline: number, compact = false, seed = 1) {
   const links = flowLinks(schema, hidden);
   const moves: ((p: FlowPlan) => boolean)[] = [];
   for (let i = 0; i < start.bands.length; i++)
@@ -203,15 +292,20 @@ async function refineFlow(schema: Schema, start: FlowPlan, direction: Direction,
   };
   // climb, then keep kicking the best plan with a few random moves and climbing again
   let best = await climb(start);
-  let seed = 1;
-  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  const rand = lcg(seed);
   while (performance.now() < deadline) {
     const kicked = clonePlan(best.plan);
     for (let k = 0; k < 3 + Math.floor(rand() * 4); k++) moves[Math.floor(rand() * moves.length)](kicked);
     const r = await climb(kicked);
     if (better(r, best)) best = r;
   }
-  return { pos: best.pos, crossings: best.crossings, score: best.score };
+  return { plan: best.plan, pos: best.pos, crossings: best.crossings, score: best.score };
+}
+
+/** Small seeded generator (Park–Miller), so a search can be replayed. */
+function lcg(seed: number) {
+  let s = Math.max(1, Math.floor(seed) % 2147483647);
+  return () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646;
 }
 
 const clonePos = (pos: Map<string, Pos>) => new Map([...pos].map(([k, p]) => [k, { ...p }]));
@@ -221,7 +315,16 @@ const clonePos = (pos: Map<string, Pos>) => new Map([...pos].map(([k, p]) => [k,
  * and keep the move whenever the drawing gets cleaner. ELK places blocks as boxes and can't
  * see which side of a group a line enters; this is where most leftover crossings come from.
  */
-export function refineBlocks(schema: Schema, start: Map<string, Pos>, hidden: Set<string>, detail: Detail = 'full', deadline = Infinity, slidesOnly = false): { pos: Map<string, Pos>; crossings: number; score: number } {
+export function refineBlocks(
+  schema: Schema,
+  start: Map<string, Pos>,
+  hidden: Set<string>,
+  detail: Detail = 'full',
+  deadline = Infinity,
+  slidesOnly = false,
+  /** Apply this many random moves before climbing, to get out of the start's local minimum. */
+  kick?: { moves: number; rand: () => number },
+): { pos: Map<string, Pos>; crossings: number; score: number } {
   const blocks = new Map<string, string[]>();
   for (const t of schema.tables) {
     const k = t.groupId ? `g:${t.groupId}` : t.id;
@@ -386,6 +489,14 @@ export function refineBlocks(schema: Schema, start: Map<string, Pos>, hidden: Se
         const all = bounds(schema.tables.map((t) => t.id), schema, p);
         slide(p, ids, true, { x: all.x + all.w / 2, y: all.y + all.h / 2 }, axis);
       });
+  if (kick && moves.length) {
+    for (let k = 0; k < kick.moves; k++) {
+      const next = clonePos(pos);
+      moves[Math.floor(kick.rand() * moves.length)](next);
+      if (next.size) pos = next;
+    }
+    cur = score(schema, pos, hidden, detail);
+  }
   let improved = true;
   while (improved && performance.now() < deadline) {
     improved = false;
@@ -475,6 +586,7 @@ async function compoundLayout(schema: Schema, opts: LayoutOptions): Promise<Map<
       'elk.spacing.edgeNode': '24',
       'elk.spacing.componentComponent': String(Math.round(120 * spacing)),
       'elk.padding': '[top=40,left=40,bottom=40,right=40]',
+      ...seedOption(opts),
     },
     children,
     edges,
@@ -494,6 +606,8 @@ async function compoundLayout(schema: Schema, opts: LayoutOptions): Promise<Map<
 
   return pos;
 }
+
+const seedOption = (opts: LayoutOptions): Record<string, string> => (opts.seed ? { 'elk.randomSeed': String(opts.seed) } : {});
 
 function portsFor(schema: Schema, t: Schema['tables'][number], usedCols: Set<string>, horizontal: boolean): ElkNode {
   const ports: ElkPort[] = [];
@@ -552,6 +666,7 @@ async function islandsLayout(schema: Schema, opts: LayoutOptions, strategy: Stra
         'elk.spacing.componentComponent': String(Math.round(48 * spacing)),
         'elk.aspectRatio': '1.4',
         'elk.padding': `[top=${GROUP_PAD.top},left=${GROUP_PAD.side},bottom=${GROUP_PAD.bottom},right=${GROUP_PAD.side}]`,
+        ...seedOption(opts),
       },
       children: members.map((m) => portsFor(schema, m, used, true)),
       edges: inner.map((r) => ({ id: r.id, sources: [`${r.to.columns[0]}:E`], targets: [`${r.from.columns[0]}:W`] })),
@@ -586,7 +701,7 @@ async function islandsLayout(schema: Schema, opts: LayoutOptions, strategy: Stra
     id: 'root',
     layoutOptions:
       algo === 'stress'
-        ? { 'elk.algorithm': 'stress', 'elk.stress.desiredEdgeLength': String(Math.round(260 * spacing)), 'elk.stress.dimension': 'XY' }
+        ? { 'elk.algorithm': 'stress', 'elk.stress.desiredEdgeLength': String(Math.round(260 * spacing)), 'elk.stress.dimension': 'XY', ...seedOption(opts) }
         : {
             'elk.algorithm': 'layered',
             'elk.direction': strategy === 'islands-down' ? 'DOWN' : 'RIGHT',
@@ -597,6 +712,7 @@ async function islandsLayout(schema: Schema, opts: LayoutOptions, strategy: Stra
             'elk.spacing.componentComponent': String(Math.round(120 * spacing)),
             'elk.layered.wrapping.strategy': 'MULTI_EDGE',
             'elk.aspectRatio': String(TARGET_ASPECT),
+            ...seedOption(opts),
           },
     children: [...blocks.keys()].map((b) => ({ id: b, width: size.get(b)!.w, height: size.get(b)!.h })),
     edges: outer.map((e) => ({ id: e.id, sources: [e.s], targets: [e.t] })),

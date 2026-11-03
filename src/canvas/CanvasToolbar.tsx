@@ -97,6 +97,24 @@ function ArrangeMenu() {
   );
 }
 
+/** Shown while the layout search started by Arrange runs: click to keep the drawing as it is now. */
+function LayoutSearchPill() {
+  const searching = useStore((s) => s.layoutSearch);
+  if (!searching) return null;
+  return (
+    <button
+      className="tb-btn ct-search"
+      title="Looking for a cleaner arrangement; the tables move by themselves when one is found. Click to stop here, ⌘Z to undo the whole Arrange."
+      aria-label="Stop looking for a cleaner arrangement"
+      onClick={() => useStore.getState().stopLayoutSearch()}
+    >
+      <Loader2 size={14} className="spin" />
+      <span className="tb-label">Searching…</span>
+      <X size={12} />
+    </button>
+  );
+}
+
 /** Shown while a join path is lit, in every view: reopens the Join paths panel, or clears the path. */
 function JoinPathPill() {
   const res = usePath();
@@ -147,6 +165,7 @@ export function CanvasToolbar({ moveLocked, onMoveLocked, snap, onSnap }: { move
             {moveLocked ? <Lock size={15} /> : <LockOpen size={15} />}
           </button>
           <ArrangeMenu />
+          <LayoutSearchPill />
           <button
             className={`tb-btn ${snap ? 'is-on' : ''}`}
             onClick={onSnap}

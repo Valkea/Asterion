@@ -13,6 +13,7 @@ import { autoLayout, type ArrangeMode, type Direction } from '../layout/auto';
 import { suggestGroups } from '../layout/cluster';
 import type { Detail } from '../layout/geometry';
 import { routedCrossings } from '../layout/routing';
+import type { SearchMessage, SearchRequest } from '../layout/arrange.worker';
 import { inDegree } from '../analysis/graph';
 import { isPhone } from '../util/phone';
 
@@ -59,6 +60,8 @@ interface State {
   moveLocked: boolean;
   hubThreshold: number;
   layoutBusy: boolean;
+  /** After Arrange, a worker keeps looking for a cleaner arrangement and applies each one it finds. */
+  layoutSearch: boolean;
   direction: Direction;
   arrangeMode: ArrangeMode;
   /** Dependency arrangement: pack each column instead of lining cards up with their links (smaller, more crossings). */
@@ -94,7 +97,9 @@ interface State {
   set: (p: Partial<State>) => void;
   toast: (text: string, tone?: Toast['tone']) => void;
   runAutoLayout: (opts?: { regroup?: boolean }) => Promise<void>;
-  animateTo: (target: Map<string, { x: number; y: number }>) => Promise<void>;
+  stopLayoutSearch: () => void;
+  /** background: a move by the layout search, part of the Arrange's undo step and dropped once the search is stopped. */
+  animateTo: (target: Map<string, { x: number; y: number }>, opts?: { background?: boolean }) => Promise<void>;
   addTable: (at: { x: number; y: number }) => string;
   addNote: (at: { x: number; y: number }, attachedTo?: string) => void;
   deleteSelection: () => void;
@@ -171,6 +176,7 @@ export const useStore = create<State>((set, get) => ({
   moveLocked: true,
   hubThreshold: 1,
   layoutBusy: false,
+  layoutSearch: false,
   direction: 'RIGHT',
   arrangeMode: 'groups',
   flowCompact: false,
@@ -206,12 +212,14 @@ export const useStore = create<State>((set, get) => ({
     set({ past: [...past.slice(-HISTORY), schema], future: [], lastKey: undefined });
   },
   undo: () => {
+    stopSearch(); // even when Arrange changed nothing and the schema stays the same object
     const { past, schema, future } = get();
     if (!past.length) return;
     const prev = past[past.length - 1];
     set({ schema: prev, past: past.slice(0, -1), future: [schema, ...future], origin: 'canvas', lastKey: undefined, revision: get().revision + 1, welcome: isBlank(prev) && get().welcome }); // undoing a start-over leaves the welcome screen
   },
   redo: () => {
+    stopSearch();
     const { past, schema, future } = get();
     if (!future.length) return;
     set({ schema: future[0], future: future.slice(1), past: [...past, schema], origin: 'canvas', lastKey: undefined, revision: get().revision + 1, welcome: isBlank(future[0]) });
@@ -340,6 +348,7 @@ export const useStore = create<State>((set, get) => ({
 
   runAutoLayout: async ({ regroup } = {}) => {
     if (get().layoutBusy) return;
+    stopSearch();
     set({ layoutBusy: true });
     try {
       if (regroup) {
@@ -358,6 +367,8 @@ export const useStore = create<State>((set, get) => ({
       const after = routedCrossings(get().schema, hidden, viewDetail);
       if (schema.tables.some((t) => t.x || t.y))
         get().toast(after === before ? `No cleaner arrangement found · ${after} line crossings` : `Auto-layout done · line crossings ${before} → ${after}`);
+      if (get().schema.tables.length > 2)
+        startSearch({ schema: get().schema, direction, mode: arrangeMode, compact: flowCompact, detail: viewDetail, hidden: [...hidden], seed: 1 + Math.floor(Math.random() * 1e6) }, after);
     } catch (e) {
       console.error(e);
       get().toast(`Layout failed: ${(e as Error).message}`, 'err');
@@ -366,17 +377,29 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  animateTo: (target) =>
+  stopLayoutSearch: () => stopSearch(),
+
+  animateTo: (target, opts) =>
     new Promise((resolve) => {
-      get().checkpoint();
+      const owner = opts?.background ? search : null;
+      if (!owner) get().checkpoint();
+      const write = (fn: (d: Schema) => void) => {
+        if (owner) owner.writing = true;
+        try {
+          get().setTransient(fn);
+        } finally {
+          if (owner) owner.writing = false;
+        }
+      };
       const start = new Map(get().schema.tables.map((t) => [t.id, { x: t.x, y: t.y }]));
       const dur = 650;
       const t0 = performance.now();
       const ease = (k: number) => 1 - Math.pow(1 - k, 3);
       const frame = (now: number) => {
+        if (owner && search !== owner) return resolve(); // the user undid or changed something: leave it be
         const k = Math.min(1, (now - t0) / dur);
         const e = ease(k);
-        get().setTransient((d) => {
+        write((d) => {
           for (const t of d.tables) {
             const a = start.get(t.id);
             const b = target.get(t.id);
@@ -387,7 +410,7 @@ export const useStore = create<State>((set, get) => ({
         });
         if (k < 1) requestAnimationFrame(frame);
         else {
-          get().setTransient((d) => {
+          write((d) => {
             for (const t of d.tables) {
               const b = target.get(t.id);
               if (b) {
@@ -454,6 +477,77 @@ export const useStore = create<State>((set, get) => ({
     set({ selection: null });
   },
 }));
+
+interface Search {
+  worker: Worker;
+  /** The search is moving tables itself: not a reason to stop it. */
+  writing: boolean;
+  animating: boolean;
+  pending?: { pos: Map<string, { x: number; y: number }>; crossings: number };
+  done: boolean;
+  /** Crossings when the search started, and in the latest arrangement it applied. */
+  from: number;
+  found: number | null;
+}
+
+let search: Search | null = null;
+
+function stopSearch() {
+  if (!search) return;
+  search.worker.terminate();
+  search = null;
+  useStore.setState({ layoutSearch: false });
+}
+
+function startSearch(req: SearchRequest, crossings: number) {
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL('../layout/arrange.worker.ts', import.meta.url), { type: 'module' });
+  } catch {
+    return; // no workers here (e.g. opened from a file): Arrange's first answer stands
+  }
+  const me: Search = { worker, writing: false, animating: false, done: false, from: crossings, found: null };
+  search = me;
+  useStore.setState({ layoutSearch: true });
+  const finish = () => {
+    if (search !== me) return;
+    if (me.found !== null)
+      useStore.getState().toast(
+        me.found < me.from ? `Found a cleaner arrangement · line crossings ${me.from} → ${me.found}` : `Found a more compact arrangement · ${me.found} line crossings`,
+      );
+    stopSearch();
+  };
+  const applyNext = async () => {
+    if (me.animating || !me.pending) return;
+    const { pos, crossings: n } = me.pending;
+    me.pending = undefined;
+    me.animating = true;
+    await useStore.getState().animateTo(pos, { background: true });
+    me.animating = false;
+    if (search !== me) return;
+    me.found = n;
+    if (me.pending) void applyNext();
+    else if (me.done) finish();
+  };
+  worker.onmessage = (e: MessageEvent<SearchMessage>) => {
+    if (search !== me) return;
+    if (e.data.type === 'done') {
+      me.done = true;
+      if (!me.animating && !me.pending) finish();
+      return;
+    }
+    me.pending = { pos: new Map(e.data.pos.map(([id, x, y]) => [id, { x, y }])), crossings: e.data.crossings };
+    void applyNext();
+  };
+  worker.onerror = () => search === me && stopSearch();
+  worker.postMessage(req);
+}
+
+// Anything that changes the schema other than the search itself (undo, a drag, an edit, a load) ends it:
+// its answer would be for a drawing that is no longer there.
+useStore.subscribe((s, prev) => {
+  if (search && !search.writing && s.schema !== prev.schema) stopSearch();
+});
 
 export function newGroupColor(schema: Schema): string {
   return paletteColor(schema.groups.length);

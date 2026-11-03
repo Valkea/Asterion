@@ -418,6 +418,9 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .ct-group .tb-btn { height: 30px; }
 .tb-btn.move-lock.is-locked { color: var(--accent-ink); background: var(--accent); }
 .tb-btn.move-lock.is-locked:hover { background: color-mix(in srgb, var(--accent) 85%, white); color: var(--accent-ink); }
+/* the layout search Arrange leaves running */
+.tb-btn.ct-search { color: var(--accent); gap: 5px; }
+.ct-search .tb-label { font-size: 12px; }
 .ct-path .tb-label { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ct-pop { left: 0; right: auto; min-width: 0; width: max-content; display: flex; flex-direction: column; gap: 8px; padding: 12px; }
 .ct-row { display: flex; align-items: center; gap: 12px; }

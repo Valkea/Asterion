@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseSql } from '../src/sql/parser';
 import { suggestGroups } from '../src/layout/cluster';
-import { autoLayout, autoLayoutDetailed, type Strategy } from '../src/layout/auto';
+import { autoLayout, autoLayoutDetailed, searchLayouts, type Strategy } from '../src/layout/auto';
 import { CARD_W, cardHeight, countCrossings } from '../src/layout/geometry';
 import { routedCrossings } from '../src/layout/routing';
 import type { Schema } from '../src/model/types';
@@ -173,5 +173,33 @@ describe('auto-layout spacing', () => {
     const both = (x: Schema['tables'][number], y: Schema['tables'][number]) => !!x.locked && !!y.locked;
     expect(closest(s, both).side).toBeGreaterThanOrEqual(44);
     expect(closest(s, both).stack).toBeGreaterThanOrEqual(30);
+  }, 30000);
+
+  it('keeps searching from the applied drawing, only ever reporting cleaner ones', async () => {
+    for (const mode of ['groups', 'flow'] as const) {
+      const s = sample();
+      // a poor start: tables dealt onto a grid in file order
+      s.tables.forEach((t, i) => Object.assign(t, { x: (i % 5) * 500, y: Math.floor(i / 5) * 600 }));
+      const start = routedCrossings(s, new Set(), 'full');
+      const found: number[] = [];
+      let last = s;
+      const t0 = performance.now();
+      await searchLayouts(s, { direction: 'RIGHT', mode }, {
+        deadline: t0 + 8000,
+        staleMs: 4000,
+        seed: 3,
+        onBetter: ({ pos, crossings }) => {
+          found.push(crossings);
+          last = { ...s, tables: s.tables.map((t) => ({ ...t, ...pos.get(t.id) })) };
+          expect(routedCrossings(last, new Set(), 'full')).toBe(crossings);
+        },
+      });
+      expect(performance.now() - t0).toBeLessThan(8000 + 4000); // a round may finish after the deadline
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.every((n, i) => n <= (i ? found[i - 1] : start))).toBe(true);
+      const { side, stack } = closest(last);
+      expect(side).toBeGreaterThanOrEqual(44);
+      expect(stack).toBeGreaterThanOrEqual(30);
+    }
   }, 30000);
 });
