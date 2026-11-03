@@ -651,10 +651,15 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .view-blueprint .bg { --xy-background-pattern-color: var(--dots); }
 .view-blueprint .bg-major { --xy-background-pattern-color: color-mix(in srgb, var(--bp-ink) 9%, transparent); }
 .view-blueprint .tcard {
-  background: var(--canvas-bg); border-radius: 2px; box-shadow: 0 0 0 1.5px var(--bp-ink); color: var(--bp-ink);
+  background: var(--canvas-bg); border-radius: 2px; box-shadow: none; color: var(--bp-ink);
   --card-accent: var(--bp-ink);
 }
-.view-blueprint .tcard.is-selected { box-shadow: 0 0 0 2.5px var(--bp-ink), 0 0 0 7px color-mix(in srgb, var(--bp-ink) 18%, transparent); }
+/* a spread-only shadow ring can lose whole sides at fractional zoom / device scale (seen on Linux Chrome): draw the outline as a real border, which never rounds away */
+.view-blueprint .tcard::after {
+  content: ''; position: absolute; inset: -1.5px; border: 1.5px solid var(--bp-ink); border-radius: 3.5px; pointer-events: none;
+}
+.view-blueprint .tcard.is-selected { box-shadow: 0 0 0 7px color-mix(in srgb, var(--bp-ink) 18%, transparent); }
+.view-blueprint .tcard.is-selected::after { inset: -2.5px; border-width: 2.5px; border-radius: 4.5px; }
 .view-blueprint .tcard-head { background: transparent; border-radius: 0; border-bottom: 1.5px solid var(--bp-ink); }
 .view-blueprint .tcard-bar { display: none; }
 .view-blueprint .tcard-name { text-transform: uppercase; letter-spacing: .06em; font-size: 13px; }
