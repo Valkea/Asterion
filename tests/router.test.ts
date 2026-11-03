@@ -168,6 +168,28 @@ describe('router', () => {
   });
 });
 
+describe('routing a schema', () => {
+  it('starts lines from different columns at their own points on a far-zoom block, and keeps lines to one column together', () => {
+    const s = parseSql(`
+      create table b (id int primary key);
+      create table c (id int primary key);
+      create table a (id int primary key, b_id int references b(id), c_id int references c(id));
+      create table d (id int primary key, b_id int references b(id));
+    `).schema;
+    const at = { a: [0, 0], b: [600, -200], c: [600, 300], d: [0, 400] } as Record<string, number[]>;
+    for (const t of s.tables) [t.x, t.y] = at[t.name];
+    const name = new Map(s.tables.map((t) => [t.id, t.name]));
+    const rel = (from: string, to: string) => s.relations.find((r) => name.get(r.from.table) === from && name.get(r.to.table) === to)!.id;
+    const routes = routeSchema(s, 'compact');
+    const first = (id: string) => routes.get(id)!.points[0];
+    const last = (id: string) => routes.get(id)!.points.at(-1)!;
+    expect(first(rel('a', 'b'))).not.toEqual(first(rel('a', 'c')));
+    // the line going up leaves higher
+    expect(first(rel('a', 'b')).y).toBeLessThan(first(rel('a', 'c')).y);
+    expect(last(rel('a', 'b'))).toEqual(last(rel('d', 'b')));
+  });
+});
+
 describe.runIf(existsSync(REF))('router on the reference schema', () => {
   it('routes the arranged schema without cutting through cards', async () => {
     const s = parseSql(readFileSync(REF, 'utf8')).schema;
