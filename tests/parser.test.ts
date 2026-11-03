@@ -63,12 +63,14 @@ describe('parser', () => {
     expect(diagnostics.length).toBeGreaterThan(0);
   });
 
-  it('reads the layout comment, including the pre-rename `opendb:layout:` marker', () => {
+  it('reads the layout comment, including the pre-rename `asterion:layout:` and `opendb:layout:` markers', () => {
     const { schema } = parseSql(readFileSync('src/sample.sql', 'utf8'));
     const sql = generateSql(schema, { embedLayout: true });
     const blob = parseSql(sql).layoutBlob;
     expect(blob).toBeTruthy();
-    expect(parseSql(sql.replace(/asterion:layout:/g, 'opendb:layout:')).layoutBlob).toBe(blob);
+    expect(sql).toContain('-- dedal:layout:');
+    expect(parseSql(sql.replace(/dedal:layout:/g, 'asterion:layout:')).layoutBlob).toBe(blob);
+    expect(parseSql(sql.replace(/dedal:layout:/g, 'opendb:layout:')).layoutBlob).toBe(blob);
   });
 
   it.runIf(existsSync(REF))('parses the reference schema and round-trips through SQL and the URL codec', () => {

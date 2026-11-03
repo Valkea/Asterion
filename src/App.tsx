@@ -30,7 +30,7 @@ function useUrlSync() {
         lastWritten.current = packed;
         st.set({ linkError: null });
         useStore.getState().load(schema);
-        document.title = `${schema.name} · Asterion`;
+        document.title = `${schema.name} · Dedal`;
       } catch (e) {
         console.error(e);
         st.set({
@@ -52,10 +52,10 @@ function useUrlSync() {
         // started over: clear the address bar, as a new history entry so Back returns to the previous schema
         if (window.location.hash) window.history.pushState(null, '', window.location.pathname + window.location.search);
         lastWritten.current = '';
-        document.title = 'Asterion';
+        document.title = 'Dedal';
         return;
       }
-      document.title = `${schema.name} · Asterion`;
+      document.title = `${schema.name} · Dedal`;
       const packed = encodeSchema(schema);
       if (packed === lastWritten.current) return;
       lastWritten.current = packed;

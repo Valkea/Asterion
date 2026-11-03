@@ -121,7 +121,7 @@ function Brand() {
         <circle cx="20" cy="22" r="3.6" fill="#f0abfc" />
         <path d="M10 11 L22 9 M10 11 L20 22 M22 9 L20 22" stroke="currentColor" strokeOpacity=".5" strokeWidth="1.2" />
       </svg>
-      <span>Asterion</span>
+      <span>Dedal</span>
     </button>
   );
 }

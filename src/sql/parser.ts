@@ -19,7 +19,7 @@ export interface Diagnostic {
 export interface ParseResult {
   schema: Schema;
   diagnostics: Diagnostic[];
-  /** Base64 layout blob found in `-- asterion:layout:` (or legacy `-- opendb:layout:`) comments, if any. */
+  /** Base64 layout blob found in `-- dedal:layout:` (or legacy `-- asterion:layout:` / `-- opendb:layout:`) comments, if any. */
   layoutBlob?: string;
 }
 
@@ -212,7 +212,7 @@ export function parseSql(src: string): ParseResult {
     diagnostics.push({ from: t.start, to: (endTok ?? t).end, line: t.line, severity, message });
   };
 
-  const blob = [...src.matchAll(/^--\s*(?:asterion|opendb):layout:(\S+)\s*$/gm)].map((m) => m[1]).join('');
+  const blob = [...src.matchAll(/^--\s*(?:dedal|asterion|opendb):layout:(\S+)\s*$/gm)].map((m) => m[1]).join('');
 
   const { tokens, errors } = lex(src);
   for (const e of errors) diagnostics.push({ from: e.start, to: e.end, line: e.line, severity: 'error', message: e.message });

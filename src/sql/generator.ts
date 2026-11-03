@@ -6,7 +6,7 @@ import { encodeLayout } from './layoutMeta';
 import { baseTypeName, qualified, quoteIdent, quoteLiteral } from './pg';
 
 export interface GenerateOptions {
-  /** Append the canvas layout as `-- asterion:layout:` comment lines. */
+  /** Append the canvas layout as `-- dedal:layout:` comment lines. */
   embedLayout?: boolean;
 }
 
@@ -113,7 +113,7 @@ export function generateSql(schema: Schema, opts: GenerateOptions = {}): string 
   if (opts.embedLayout) {
     const blob = encodeLayout(schema);
     const lines = blob.match(/.{1,96}/g) ?? [];
-    sql += `\n-- Canvas layout for Asterion (safe to delete)\n${lines.map((l) => `-- asterion:layout:${l}`).join('\n')}\n`;
+    sql += `\n-- Canvas layout for Dedal (safe to delete)\n${lines.map((l) => `-- dedal:layout:${l}`).join('\n')}\n`;
   }
   return sql;
 }

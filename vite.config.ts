@@ -38,8 +38,8 @@ function offline(): Plugin {
         fileName: 'manifest.webmanifest',
         source: JSON.stringify(
           {
-            name: 'Asterion',
-            short_name: 'Asterion',
+            name: 'Dedal',
+            short_name: 'Dedal',
             description: 'PostgreSQL schema designer that runs entirely in your browser, offline.',
             start_url: './',
             scope: './',

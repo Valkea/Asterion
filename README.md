@@ -1,19 +1,19 @@
 <div align="center">
 
-# Asterion
+# Dedal
 
-*Every foreign key is a thread: follow it through the labyrinth of your tables.*
+*Draw your tables like an architect. Read them like a map. Fly over them like Daedalus.*
 
 **See your schema.** A PostgreSQL schema designer that runs entirely in your browser:
 as an atlas of domains, a precise blueprint, or a constellation to explore.
 
-[![Open the app](https://img.shields.io/badge/open%20the%20app-valkea.github.io%2FAsterion-7c8cff?style=for-the-badge)](https://valkea.github.io/Asterion/)
+[![Open the app](https://img.shields.io/badge/open%20the%20app-valkea.github.io%2Fdedal-7c8cff?style=for-the-badge)](https://valkea.github.io/dedal/)
 
-[![Deploy](https://github.com/valkea/Asterion/actions/workflows/pages.yml/badge.svg)](https://github.com/valkea/Asterion/actions/workflows/pages.yml)
+[![Deploy](https://github.com/Valkea/dedal/actions/workflows/pages.yml/badge.svg)](https://github.com/Valkea/dedal/actions/workflows/pages.yml)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-DDL-336791?logo=postgresql&logoColor=white)](#more-features)
-[![No backend](https://img.shields.io/badge/backend-none-2ea44f)](#why-asterion)
-[![Works offline](https://img.shields.io/badge/works-offline-2ea44f)](#why-asterion)
-[![No tracking](https://img.shields.io/badge/tracking-none-2ea44f)](#why-asterion)
+[![No backend](https://img.shields.io/badge/backend-none-2ea44f)](#why-dedal)
+[![Works offline](https://img.shields.io/badge/works-offline-2ea44f)](#why-dedal)
+[![No tracking](https://img.shields.io/badge/tracking-none-2ea44f)](#why-dedal)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white)](#develop)
 [![React 19](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)](#develop)
 
@@ -21,7 +21,7 @@ as an atlas of domains, a precise blueprint, or a constellation to explore.
 
 </div>
 
-## Why Asterion
+## Why Dedal
 
 - 🔒 **Nothing leaves your browser.** Your SQL is parsed, checked and drawn on your device. There is no
   server, and the production build ships a [Content-Security-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP) that forbids the page from
@@ -39,13 +39,13 @@ as an atlas of domains, a precise blueprint, or a constellation to explore.
 
 ## Beyond the diagram
 
-Asterion doesn't stop at drawing your tables: it also tidies, checks, explains and compares your
+Dedal doesn't stop at drawing your tables: it also tidies, checks, explains and compares your
 schema, all inside your browser.
 
 ### 🧭 Arrange: a clean layout in one click
 
 Press <kbd>L</kbd>. Each group is laid out as an island and the islands are placed around each other.
-Asterion tries several strategies and keeps the one with the fewest crossing lines. Arrange **by
+Dedal tries several strategies and keeps the one with the fewest crossing lines. Arrange **by
 group** (it picks the cleanest direction itself) or **by dependency** (left to right, or top to
 bottom). Lock a table or a group and it never moves; everything else is placed around it.
 **Suggest groups** finds clusters of closely linked tables and proposes them as groups.
@@ -135,7 +135,7 @@ nearby star shows how many hops away it is, and everything beyond the lens reach
 
 Press <kbd>S</kbd> to open the SQL next to the canvas. Edit the PostgreSQL DDL (the `CREATE`
 statements) and the canvas follows; edit the canvas and the SQL is rewritten. Errors show up inline
-and pause syncing instead of breaking the drawing. Statements Asterion doesn't draw (views,
+and pause syncing instead of breaking the drawing. Statements Dedal doesn't draw (views,
 functions, triggers…) are kept as you wrote them.
 
 <img src="public/medias/sql-twin.png" alt="The Atlas view with the live SQL pane open on the right" width="100%">
