@@ -29,7 +29,7 @@ export interface RouterRegion extends Box {
 
 export interface RouterEdge {
   id: string;
-  /** Lines with the same net (same referenced column) may share a trunk. */
+  /** Lines with the same net (same referenced column) may share a corridor; nudging gives each its lane. */
   net: string;
   src: { card: string; y: number };
   dst: { card: string; y: number };
@@ -474,6 +474,7 @@ export function routeEdges(input: RouterInput): Map<string, Route> {
   }
 
   nudge(out, cards, edges, regions);
+  for (const r of out.values()) r.points = simplify(r.points);
   return out;
 }
 
@@ -491,8 +492,8 @@ export function simplify(pts: Pt[]): Pt[] {
 }
 
 /**
- * Lines cutting through each other, even two lines to the same column: running along a shared trunk
- * or ending on it touches only at an end point, which the strict bounds leave out.
+ * Lines cutting through each other, even two lines to the same column: meeting on their shared stub
+ * touches only at an end point, which the strict bounds leave out.
  */
 export function countRouteCrossings(routes: Map<string, Route>): number {
   const hs: { y: number; x0: number; x1: number }[] = [];

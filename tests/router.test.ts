@@ -143,6 +143,29 @@ describe('router', () => {
     expect(lane('e1')).not.toBe(lane('e2'));
     expect(countRouteCrossings(routes)).toBe(0);
   });
+
+  it('gives lines to the same column lanes of their own, meeting only on its stub', () => {
+    const routes = routeEdges({
+      cards: [
+        { id: 't', x: 0, y: 0, w: 100, h: 60 },
+        { id: 'a', x: 200, y: 200, w: 200, h: 100 },
+        { id: 'b', x: 500, y: 200, w: 200, h: 100 },
+        { id: 'c', x: 800, y: 200, w: 200, h: 100 },
+      ],
+      edges: ['a', 'b', 'c'].map((k) => ({ id: k, net: 't:id', src: { card: k, y: 250 }, dst: { card: 't', y: 30 } })),
+    });
+    // lines touch only within the stub out of the column (x 100 to 130), where they part
+    const all = [...routes.values()];
+    for (let i = 0; i < all.length; i++)
+      for (let j = i + 1; j < all.length; j++)
+        for (const [a1, a2, a3, a4] of segsOf(all[i]))
+          for (const [b1, b2, b3, b4] of segsOf(all[j])) {
+            const shared = (p: number, q: number, r: number, s: number) => Math.min(Math.max(p, q), Math.max(r, s)) - Math.max(Math.min(p, q), Math.min(r, s)) > 0;
+            if (a2 === a4 && b2 === b4 && a2 === b2 && shared(a1, a3, b1, b3)) expect(Math.min(Math.max(a1, a3), Math.max(b1, b3))).toBeLessThanOrEqual(130);
+            if (a1 === a3 && b1 === b3 && a1 === b1 && shared(a2, a4, b2, b4)) expect(a1).toBeLessThanOrEqual(130);
+          }
+    expect(countRouteCrossings(routes)).toBe(0);
+  });
 });
 
 describe.runIf(existsSync(REF))('router on the reference schema', () => {
