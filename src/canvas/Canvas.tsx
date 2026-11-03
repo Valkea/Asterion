@@ -159,9 +159,6 @@ export function Canvas() {
   // Atlas exports what the zoom shows (full cards, compact cards or the group overview), never the partial "+ n more" cards;
   // the other views export full cards
   const detail: Detail = view === 'blueprint' || (exporting && (view !== 'atlas' || zoomDetail === 'keys')) ? 'full' : zoomDetail;
-  useEffect(() => {
-    if (!exporting) useStore.setState({ viewDetail: detail });
-  }, [detail, exporting]);
   const farZoom = useFlowStore(overviewSelector);
   const overview = view === 'atlas' && farZoom && schema.groups.length > 0;
   const hidden = useHidden();

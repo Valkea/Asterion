@@ -4,14 +4,12 @@
 
 import type { Schema } from '../model/types';
 import { searchLayouts, type ArrangeMode, type Direction } from './auto';
-import type { Detail } from './geometry';
 
 export interface SearchRequest {
   schema: Schema;
   direction: Direction;
   mode: ArrangeMode;
   compact: boolean;
-  detail: Detail;
   hidden: string[];
   seed: number;
 }
@@ -28,10 +26,10 @@ const post = (m: SearchMessage) => self.postMessage(m);
 // elkjs, once loaded in a worker, sets self.onmessage for its own protocol: listen beside it
 // (it ignores messages without a `cmd`)
 self.addEventListener('message', async (e: MessageEvent<SearchRequest>) => {
-  const { schema, direction, mode, compact, detail, hidden, seed } = e.data;
+  const { schema, direction, mode, compact, hidden, seed } = e.data;
   await searchLayouts(
     schema,
-    { direction, mode, compact, detail, hiddenRelations: new Set(hidden) },
+    { direction, mode, compact, hiddenRelations: new Set(hidden) },
     {
       deadline: performance.now() + SEARCH_MS,
       staleMs: STALE_MS,

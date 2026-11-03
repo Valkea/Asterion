@@ -22,8 +22,6 @@ export interface LayoutOptions {
   mode?: ArrangeMode;
   /** Flow only: pack each column instead of lining cards up with their links. */
   compact?: boolean;
-  /** Detail level the lines are drawn at, so crossings are counted on the drawing the user sees. */
-  detail?: Detail;
   /** Seed for ELK's own random choices (the background search varies it). */
   seed?: number;
 }
@@ -46,6 +44,8 @@ export interface LayoutResult {
 }
 
 const TARGET_ASPECT = 1.7;
+/** Crossings are counted on the deepest zoom: every column drawn, the most rows for lines to cross at. */
+const ARRANGE_DETAIL: Detail = 'full';
 
 /** Lower is better: crossings dominate, then an elongated or sprawling drawing. */
 function score(schema: Schema, pos: Map<string, Pos>, hidden: Set<string>, detail: Detail): { score: number; crossings: number } {
@@ -90,7 +90,7 @@ export async function autoLayout(schema: Schema, opts: LayoutOptions): Promise<M
 /** Try several strategies, polish the most promising ones, and keep the cleanest drawing (never one with more crossings than now). */
 export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): Promise<LayoutResult> {
   const hidden = opts.hiddenRelations ?? new Set<string>();
-  const detail = opts.detail ?? 'full';
+  const detail = ARRANGE_DETAIL;
   if (opts.mode === 'flow' || opts.only === 'flow') {
     const plan = flowPlan(schema, hidden);
     const placed = placeFlow(schema, plan, opts.direction, hidden, opts.compact);
@@ -158,7 +158,7 @@ const MIN_GAIN = 0.5;
  */
 export async function searchLayouts(schema: Schema, opts: LayoutOptions, search: SearchOptions): Promise<void> {
   const hidden = opts.hiddenRelations ?? new Set<string>();
-  const detail = opts.detail ?? 'full';
+  const detail = ARRANGE_DETAIL;
   const startPos = new Map(schema.tables.map((t) => [t.id, { x: t.x, y: t.y }]));
   let best = { pos: startPos, ...score(schema, startPos, hidden, detail) };
   let plan = opts.mode === 'flow' ? flowPlan(schema, hidden) : null;

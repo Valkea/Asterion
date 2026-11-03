@@ -11,7 +11,6 @@ import { decodeSchema } from '../share/codec';
 import { diffSchemas } from '../analysis/diff';
 import { autoLayout, type ArrangeMode, type Direction } from '../layout/auto';
 import { suggestGroups } from '../layout/cluster';
-import type { Detail } from '../layout/geometry';
 import { routedCrossings } from '../layout/routing';
 import type { SearchMessage, SearchRequest } from '../layout/arrange.worker';
 import { inDegree } from '../analysis/graph';
@@ -66,8 +65,6 @@ interface State {
   arrangeMode: ArrangeMode;
   /** Dependency arrangement: pack each column instead of lining cards up with their links (smaller, more crossings). */
   flowCompact: boolean;
-  /** Detail level the canvas currently draws at (set by the canvas from the zoom). */
-  viewDetail: Detail;
   /** An image export is being captured: the canvas draws everything at full detail, with no selection or hover. */
   exporting: boolean;
   toasts: Toast[];
@@ -180,7 +177,6 @@ export const useStore = create<State>((set, get) => ({
   direction: 'RIGHT',
   arrangeMode: 'groups',
   flowCompact: false,
-  viewDetail: 'full',
   exporting: false,
   toasts: [],
   welcome: false,
@@ -359,16 +355,16 @@ export const useStore = create<State>((set, get) => ({
           d.groups.push(...s.groups);
         });
       }
-      const { schema, portals, hubThreshold, direction, arrangeMode, flowCompact, viewDetail } = get();
+      const { schema, portals, hubThreshold, direction, arrangeMode, flowCompact } = get();
       const hidden = hiddenRelations(schema, portals, hubThreshold);
-      const before = routedCrossings(schema, hidden, viewDetail);
-      const pos = await autoLayout(schema, { direction, mode: arrangeMode, hiddenRelations: hidden, compact: flowCompact, detail: viewDetail });
+      const before = routedCrossings(schema, hidden);
+      const pos = await autoLayout(schema, { direction, mode: arrangeMode, hiddenRelations: hidden, compact: flowCompact });
       await get().animateTo(pos);
-      const after = routedCrossings(get().schema, hidden, viewDetail);
+      const after = routedCrossings(get().schema, hidden);
       if (schema.tables.some((t) => t.x || t.y))
         get().toast(after === before ? `No cleaner arrangement found · ${after} line crossings` : `Auto-layout done · line crossings ${before} → ${after}`);
       if (get().schema.tables.length > 2)
-        startSearch({ schema: get().schema, direction, mode: arrangeMode, compact: flowCompact, detail: viewDetail, hidden: [...hidden], seed: 1 + Math.floor(Math.random() * 1e6) }, after);
+        startSearch({ schema: get().schema, direction, mode: arrangeMode, compact: flowCompact, hidden: [...hidden], seed: 1 + Math.floor(Math.random() * 1e6) }, after);
     } catch (e) {
       console.error(e);
       get().toast(`Layout failed: ${(e as Error).message}`, 'err');
